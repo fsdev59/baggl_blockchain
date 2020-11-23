@@ -14,12 +14,12 @@ contract BagglCreditToken is BagglCreditTokenBase {
         return super.transfer(recipient, amount);
     }
 
-    function mint(address to, uint256 amount) public onlyMaster {
+    function mint(address to, uint256 amount) external onlyMaster {
         require(amount > 0, "can't mint 0 token");
         _mint(to, amount);
     }
 
-    function burn(address to, uint256 amount) public onlyOwner(to) {
+    function burn(address to, uint256 amount) external onlyOwner(to) {
         _burn(to, amount);
     }
 }

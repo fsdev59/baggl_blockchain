@@ -26,6 +26,7 @@ contract BagglMaster {
     address private _developer;
 
     uint256 private _initialUserCredit = 15000;
+    uint256 private _referenceBonus = 15000;
     uint256 private _feeAmount = 5;
     uint256 private _feeMax = 100;
 
@@ -84,9 +85,9 @@ contract BagglMaster {
 
     modifier onlyNormal(address address_) {
         require(
-            _userStates[address_] == UserState.NORMAL ||
-                msg.sender == _developer ||
-                msg.sender == _gov,
+            _userStates[address_] == UserState.NORMAL, // ||
+            // msg.sender == _developer ||
+            // msg.sender == _gov,
             "not normal state"
         );
         _;
@@ -157,6 +158,14 @@ contract BagglMaster {
         return _initialUserCredit;
     }
 
+    function setReferenceBonus(uint256 amount_) external onlyGov {
+        _referenceBonus = amount_;
+    }
+
+    function referenceBonus() public view returns (uint256) {
+        return _referenceBonus;
+    }
+
     function setOwnership(
         address owner_,
         address address_,
@@ -170,11 +179,7 @@ contract BagglMaster {
         token.setOwnership(owner_, address_, ownership_);
     }
 
-    function registerUser(address user_)
-        public
-        onlyOwner(user_)
-        onlyNew(user_)
-    {
+    function registerUser(address user_) public onlyGov onlyNew(user_) {
         if (_initialUserCredit > 0) {
             token.mint(user_, _initialUserCredit);
         }
@@ -199,6 +204,9 @@ contract BagglMaster {
         );
         registerAdmin(admin_);
         _referrer[admin_] = referrer_;
+        if (_referenceBonus > 0) {
+            token.mint(referrer_, _referenceBonus);
+        }
     }
 
     function registerRoles(address admin_, address roles_)
@@ -215,15 +223,19 @@ contract BagglMaster {
         );
         _userTypes[admin_] = UserType.BUSINESS_ROLES;
         setOwnership(admin_, roles_, true);
-        setOwnership(address(this), roles_, true);
+        token.setOwnership(address(this), roles_, true);
     }
 
     function transferFrom(address from_, uint256 amount_)
         public
-        onlyNormal(msg.sender)
         onlyOwner(from_)
+        onlyNormal(msg.sender)
     {
-        token.transferFrom(from_, msg.sender, amount_);
+        if (msg.sender == _gov || msg.sender == _developer) {
+            token.burn(from_, amount_);
+        } else {
+            token.transferFrom(from_, msg.sender, amount_);
+        }
     }
 
     function transferTo(address to_, uint256 amount_)
@@ -231,19 +243,37 @@ contract BagglMaster {
         onlyNormal(msg.sender)
         onlyOwner(to_)
     {
-        token.transferFrom(msg.sender, to_, amount_);
+        if (msg.sender == _gov || msg.sender == _developer) {
+            token.mint(to_, amount_);
+        } else {
+            require(token.balanceOf(msg.sender) >= amount_, "insufficient token");
+            token.transferFrom(msg.sender, to_, amount_);
+        }
     }
 
-    function pauseUser(address to_) public onlyOwner(to_) onlyNormal(to_) {
+    function pauseUser(address to_)
+        public
+        onlyOwner(to_)
+        onlyNormal(to_)
+        onlyNormal(msg.sender)
+    {
         _userStates[to_] = UserState.PAUSED;
     }
 
-    function resumeUser(address to_) public onlyOwner(to_) {
+    function resumeUser(address to_)
+        public
+        onlyOwner(to_)
+        onlyNormal(msg.sender)
+    {
         require(_userStates[to_] == UserState.PAUSED, "not paused");
         _userStates[to_] = UserState.NORMAL;
     }
 
-    function deleteUser(address to_) public onlyOwner(to_) {
+    function deleteUser(address to_)
+        public
+        onlyOwner(to_)
+        onlyNormal(msg.sender)
+    {
         _userStates[to_] = UserState.DELETED;
         if (_owners[to_] == address(this)) {
             token.burn(to_, token.balanceOf(to_));
@@ -259,11 +289,11 @@ contract BagglMaster {
         uint256 amount,
         uint256 id
     ) public onlyGov {
-        uint256 feeAmount = amount.mul(_feeAmount).div(_feeMax);
-        uint256 realAmount = amount.sub(feeAmount);
+        require(amount > 0, "can't make transaction for 0 token");
+        uint256 serviceFeeAmount = amount.mul(_feeAmount).div(_feeMax);
+        uint256 realAmount = amount.sub(serviceFeeAmount);
         transferFrom(buyer, amount);
         transferTo(seller, realAmount);
-        token.burn(address(this), feeAmount);
         emit MadeTransaction(buyer, seller, amount, id);
     }
 
@@ -275,7 +305,6 @@ contract BagglMaster {
     ) public onlyGov {
         uint256 feeAmount = amount.mul(_feeAmount).div(_feeMax);
         uint256 realAmount = amount.sub(feeAmount);
-        token.mint(address(this), feeAmount);
         transferFrom(seller, realAmount);
         transferTo(buyer, amount);
         emit RefundedTransaction(buyer, seller, amount, id);
@@ -291,8 +320,7 @@ contract BagglMaster {
         if (isBuy) {
             _pendingTransaction[id] = TransactionType.BUY;
             emit RequestTransaction(sender, receiver, amount, id, isBuy);
-        }
-        else {
+        } else {
             _pendingTransaction[id] = TransactionType.SELL;
             emit RequestTransaction(sender, receiver, amount, id, isBuy);
         }
@@ -308,15 +336,20 @@ contract BagglMaster {
         uint256 feeAmount = amount.mul(_feeAmount).div(_feeMax);
         uint256 realAmount = amount.sub(feeAmount);
         if (isBuy) {
-            require(_pendingTransaction[id] == TransactionType.SELL, "no pending transaction");
+            require(
+                _pendingTransaction[id] == TransactionType.SELL,
+                "no pending transaction"
+            );
             transferFrom(sender, amount);
             transferTo(receiver, realAmount);
             token.burn(address(this), feeAmount);
             _pendingTransaction[id] = TransactionType.FINISHED;
             emit ReceiveTransaction(sender, receiver, amount, id);
-        }
-        else {
-            require(_pendingTransaction[id] == TransactionType.BUY, "no pending transaction");
+        } else {
+            require(
+                _pendingTransaction[id] == TransactionType.BUY,
+                "no pending transaction"
+            );
             transferFrom(receiver, amount);
             transferTo(sender, realAmount);
             token.burn(address(this), feeAmount);
@@ -333,14 +366,30 @@ contract BagglMaster {
         bool isBuy
     ) public onlySender(receiver) {
         if (isBuy) {
-            require(_pendingTransaction[id] == TransactionType.SELL, "no pending transaction");
+            require(
+                _pendingTransaction[id] == TransactionType.SELL,
+                "no pending transaction"
+            );
             _pendingTransaction[id] = TransactionType.FINISHED;
-            emit ReceiveTransaction(sender, receiver, amount, id);
-        }
-        else {
-            require(_pendingTransaction[id] == TransactionType.BUY, "no pending transaction");
+            emit RejectTransaction(sender, receiver, amount, id);
+        } else {
+            require(
+                _pendingTransaction[id] == TransactionType.BUY,
+                "no pending transaction"
+            );
             _pendingTransaction[id] = TransactionType.FINISHED;
-            emit ReceiveTransaction(sender, receiver, amount, id);
+            emit RejectTransaction(sender, receiver, amount, id);
         }
+    }
+
+    function buyToken(address buyer, uint256 amount) public onlyGov {
+        require(amount > 0, "can't buy 0 token");
+        token.mint(buyer, amount);
+    }
+
+    function sellToken(address seller, uint256 amount) public onlyGov {
+        require(token.balanceOf(seller) >= amount, "insufficient token");
+        require(amount > 0, "can't sell 0 token");
+        token.burn(seller, amount);
     }
 }

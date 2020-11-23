@@ -41,7 +41,7 @@ contract BagglCreditTokenBase is ERC20 {
         }
     }
 
-    function setOwnership(address from_, address to_, bool ownership_) public onlyMaster {
+    function setOwnership(address from_, address to_, bool ownership_) external onlyMaster {
         if (ownership_) {
             _approve(to_, from_, uint256(-1));
         }
@@ -51,7 +51,7 @@ contract BagglCreditTokenBase is ERC20 {
         _ownership[from_][to_] = ownership_;
     }
 
-    function master() public view returns(address) {
+    function master() external view returns(address) {
         return _master;
     }
 
@@ -59,11 +59,11 @@ contract BagglCreditTokenBase is ERC20 {
         _master = master_;
     }
 
-    function developer() public view returns(address) {
+    function developer() external view returns(address) {
         return _developer;
     }
 
-    function isUnlocked() public view returns(bool) {
+    function isUnlocked() external view returns(bool) {
         return _unlock;
     }
 
