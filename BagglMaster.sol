@@ -85,9 +85,7 @@ contract BagglMaster {
 
     modifier onlyNormal(address address_) {
         require(
-            _userStates[address_] == UserState.NORMAL, // ||
-            // msg.sender == _developer ||
-            // msg.sender == _gov,
+            _userStates[address_] == UserState.NORMAL,
             "not normal state"
         );
         _;
