@@ -7,7 +7,7 @@ import "./token/BagglCreditToken.sol";
 contract BagglMaster {
     using SafeMath for uint256;
 
-    BagglCreditToken token;
+    BagglCreditToken public token = BagglCreditToken(0x0000000000000000000000000000000000000000);
 
     enum UserType {USER, BUSINESS_ADMIN, BUSINESS_ROLES}
 
@@ -22,13 +22,13 @@ contract BagglMaster {
     mapping(address => address) private _owners;
     mapping(uint256 => TransactionType) private _pendingTransaction;
 
-    address private _gov;
-    address private _developer;
+    address public gov;
+    address public developer;
 
-    uint256 private _initialUserCredit = 15000;
-    uint256 private _referenceBonus = 15000;
-    uint256 private _feeAmount = 5;
-    uint256 private _feeMax = 100;
+    uint256 public initialUserCredit = 15000;
+    uint256 public referenceBonus = 15000;
+    uint256 public feeRatio = 5;
+    uint256 public feeMax = 100;
 
     event MadeTransaction(
         address buyer,
@@ -67,7 +67,7 @@ contract BagglMaster {
 
     modifier onlyGov() {
         require(
-            msg.sender == _gov || msg.sender == _developer,
+            msg.sender == gov || msg.sender == developer,
             "caller is not the gov"
         );
         _;
@@ -76,8 +76,8 @@ contract BagglMaster {
     modifier onlyOwner(address to_) {
         require(
             token.ownership(msg.sender, to_) ||
-                msg.sender == _developer ||
-                msg.sender == _gov,
+                msg.sender == developer ||
+                msg.sender == gov,
             "caller is not the owner"
         );
         _;
@@ -100,7 +100,7 @@ contract BagglMaster {
     }
 
     modifier onlyExist(address address_) {
-        require(token.ownership(address(this), address_), "not exist");
+        require(token.ownership(address(this), address_), "address not exist");
         _;
     }
 
@@ -112,56 +112,44 @@ contract BagglMaster {
     modifier onlySender(address sender_) {
         require(
             msg.sender == sender_ ||
-                msg.sender == _gov ||
-                msg.sender == _developer
+                msg.sender == gov ||
+                msg.sender == developer
         );
         _;
     }
 
-    function gov() public view returns (address) {
-        return _gov;
+    constructor() {
+        developer = msg.sender;
     }
 
     function setGov(address gov_) external onlyGov {
-        _gov = gov_;
+        gov = gov_;
     }
 
     function setMaster(address master_) external onlyGov {
         token.setMaster(master_);
     }
 
-    function developer() public view returns (address) {
-        return _developer;
-    }
-
-    function unlockOwnership() external onlyGov {
-        token.unlockOwnership();
-    }
-
-    function lockOwnership() external onlyGov {
-        token.lockOwnership();
+    function unlockOwnership(bool isUnlocked_) external onlyGov {
+        token.unlockOwnership(isUnlocked_);
     }
 
     function abdicate() external {
-        require(msg.sender == _developer, "caller is not the developer");
-        _developer = address(0);
+        require(msg.sender == developer, "caller is not the developer");
+        developer = address(0);
         token.abdicate();
     }
 
     function setInitialUserCredit(uint256 amount_) external onlyGov {
-        _initialUserCredit = amount_;
-    }
-
-    function initialUserCredit() public view returns (uint256) {
-        return _initialUserCredit;
+        initialUserCredit = amount_;
     }
 
     function setReferenceBonus(uint256 amount_) external onlyGov {
-        _referenceBonus = amount_;
+        referenceBonus = amount_;
     }
 
-    function referenceBonus() public view returns (uint256) {
-        return _referenceBonus;
+    function setFeeMax(uint feeMax_) external onlyGov {
+        feeMax = feeMax_;
     }
 
     function setOwnership(
@@ -178,8 +166,8 @@ contract BagglMaster {
     }
 
     function registerUser(address user_) public onlyGov onlyNew(user_) {
-        if (_initialUserCredit > 0) {
-            token.mint(user_, _initialUserCredit);
+        if (initialUserCredit > 0) {
+            token.mint(user_, initialUserCredit);
         }
         setOwnership(address(this), user_, true);
     }
@@ -202,8 +190,8 @@ contract BagglMaster {
         );
         registerAdmin(admin_);
         _referrer[admin_] = referrer_;
-        if (_referenceBonus > 0) {
-            token.mint(referrer_, _referenceBonus);
+        if (referenceBonus > 0) {
+            token.mint(referrer_, referenceBonus);
         }
     }
 
@@ -215,8 +203,8 @@ contract BagglMaster {
         require(
             (_userTypes[msg.sender] == UserType.BUSINESS_ADMIN &&
                 msg.sender == admin_) ||
-                msg.sender == _gov ||
-                msg.sender == _developer,
+                msg.sender == gov ||
+                msg.sender == developer,
             "not business admin"
         );
         _userTypes[admin_] = UserType.BUSINESS_ROLES;
@@ -229,7 +217,7 @@ contract BagglMaster {
         onlyOwner(from_)
         onlyNormal(msg.sender)
     {
-        if (msg.sender == _gov || msg.sender == _developer) {
+        if (msg.sender == gov || msg.sender == developer) {
             token.burn(from_, amount_);
         } else {
             token.transferFrom(from_, msg.sender, amount_);
@@ -241,7 +229,7 @@ contract BagglMaster {
         onlyNormal(msg.sender)
         onlyOwner(to_)
     {
-        if (msg.sender == _gov || msg.sender == _developer) {
+        if (msg.sender == gov || msg.sender == developer) {
             token.mint(to_, amount_);
         } else {
             require(token.balanceOf(msg.sender) >= amount_, "insufficient token");
@@ -288,7 +276,7 @@ contract BagglMaster {
         uint256 id
     ) public onlyGov {
         require(amount > 0, "can't make transaction for 0 token");
-        uint256 serviceFeeAmount = amount.mul(_feeAmount).div(_feeMax);
+        uint256 serviceFeeAmount = amount.mul(feeRatio).div(feeMax);
         uint256 realAmount = amount.sub(serviceFeeAmount);
         transferFrom(buyer, amount);
         transferTo(seller, realAmount);
@@ -301,7 +289,7 @@ contract BagglMaster {
         uint256 amount,
         uint256 id
     ) public onlyGov {
-        uint256 feeAmount = amount.mul(_feeAmount).div(_feeMax);
+        uint256 feeAmount = amount.mul(feeRatio).div(feeMax);
         uint256 realAmount = amount.sub(feeAmount);
         transferFrom(seller, realAmount);
         transferTo(buyer, amount);
@@ -331,7 +319,7 @@ contract BagglMaster {
         uint256 id,
         bool isBuy
     ) public onlySender(receiver) {
-        uint256 feeAmount = amount.mul(_feeAmount).div(_feeMax);
+        uint256 feeAmount = amount.mul(feeRatio).div(feeMax);
         uint256 realAmount = amount.sub(feeAmount);
         if (isBuy) {
             require(
