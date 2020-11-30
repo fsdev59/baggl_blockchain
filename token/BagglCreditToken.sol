@@ -15,11 +15,12 @@ contract BagglCreditToken is BagglCreditTokenBase {
     }
 
     function mint(address to, uint256 amount) external onlyMaster {
-        require(amount > 0, "can't mint 0 token");
+        require(amount > 0, "cant mint 0 tk");
         _mint(to, amount);
     }
 
     function burn(address to, uint256 amount) external onlyOwner(to) {
+        require(amount > 0, "cant burn 0 tk");
         _burn(to, amount);
     }
 }

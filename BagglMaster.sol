@@ -17,7 +17,7 @@ contract BagglMaster {
 
     mapping(address => uint256) private _debit;
     mapping(address => UserType) private _userTypes;
-    mapping(address => address) private _referrer;
+    mapping(address => address) public referrer;
     mapping(address => UserState) private _userStates;
     mapping(address => address) private _owners;
     mapping(uint256 => TransactionType) private _pendingTransaction;
@@ -25,10 +25,14 @@ contract BagglMaster {
     address public gov;
     address public developer;
 
-    uint256 public initialUserCredit = 15000;
-    uint256 public referenceBonus = 15000;
-    uint256 public feeRatio = 5;
-    uint256 public feeMax = 100;
+    uint32 public initialUserCredit = 15000;
+    uint32 public referralBonus = 5000;
+    uint32 public feeRatio = 5;
+    uint32 public feeMax = 100;
+    uint32 public defaultCommissionRatio = 1;
+    mapping(address => uint32) public commissionRatio;
+    uint32 public defaultCommissionMax = 100;
+    mapping(address => uint32) public commissionMax;
 
     event MadeTransaction(
         address buyer,
@@ -36,6 +40,7 @@ contract BagglMaster {
         uint256 amount,
         uint256 id
     );
+
     event RefundedTransaction(
         address buyer,
         address seller,
@@ -68,7 +73,7 @@ contract BagglMaster {
     modifier onlyGov() {
         require(
             msg.sender == gov || msg.sender == developer,
-            "caller is not the gov"
+            "caller isnt gov"
         );
         _;
     }
@@ -78,7 +83,7 @@ contract BagglMaster {
             token.ownership(msg.sender, to_) ||
                 msg.sender == developer ||
                 msg.sender == gov,
-            "caller is not the owner"
+            "caller isnt owner"
         );
         _;
     }
@@ -105,7 +110,7 @@ contract BagglMaster {
     }
 
     modifier onlyUnlocked() {
-        require(token.isUnlocked(), "token locked");
+        require(token.isUnlocked(), "tk locked");
         _;
     }
 
@@ -135,21 +140,47 @@ contract BagglMaster {
     }
 
     function abdicate() external {
-        require(msg.sender == developer, "caller is not the developer");
+        require(msg.sender == developer, "caller isnt dev");
         developer = address(0);
         token.abdicate();
     }
 
-    function setInitialUserCredit(uint256 amount_) external onlyGov {
+    function setInitialUserCredit(uint32 amount_) external onlyGov {
         initialUserCredit = amount_;
     }
 
-    function setReferenceBonus(uint256 amount_) external onlyGov {
-        referenceBonus = amount_;
+    function setReferralBonus(uint32 amount_) external onlyGov {
+        referralBonus = amount_;
     }
 
-    function setFeeMax(uint feeMax_) external onlyGov {
+    function setFeeRatio(uint32 feeRatio_) external onlyGov {
+        require(feeRatio_ < feeMax, "too high f_ratio");
+        feeRatio = feeRatio_;
+    }
+
+    function setFeeMax(uint32 feeMax_) external onlyGov {
+        require(feeMax_ > 0, "f_max is 0");
         feeMax = feeMax_;
+    }
+
+    function setDefaultCommissionRatio(uint32 defaultCommissionRatio_) external onlyGov {
+        require(defaultCommissionRatio_ < defaultCommissionMax, "too high c_ratio");
+        defaultCommissionRatio = defaultCommissionRatio_;
+    }
+
+    function setCommissionRatio(address referrer_, uint32 commissionRatio_) external onlyGov {
+        require(commissionRatio_ < commissionMax[referrer_], "too high c_ratio");
+        commissionRatio[referrer_] = commissionRatio_;
+    }
+
+    function setDefaultCommissionMax(uint32 defaultCommissionMax_) external onlyGov {
+        require(defaultCommissionMax_ > 0, "c_max is 0");
+        defaultCommissionMax = defaultCommissionMax_;
+    }
+
+    function setCommissionMax(address referrer_, uint32 commissionMax_) external onlyGov {
+        require(commissionMax_ > 0, "c_max is 0");
+        commissionMax[referrer_] = commissionMax_;
     }
 
     function setOwnership(
@@ -189,9 +220,10 @@ contract BagglMaster {
             "roles can't refer"
         );
         registerAdmin(admin_);
-        _referrer[admin_] = referrer_;
-        if (referenceBonus > 0) {
-            token.mint(referrer_, referenceBonus);
+        referrer[admin_] = referrer_;
+        commissionRatio[admin_] = defaultCommissionRatio;
+        if (referralBonus > 0) {
+            token.mint(referrer_, referralBonus);
         }
     }
 
@@ -232,7 +264,7 @@ contract BagglMaster {
         if (msg.sender == gov || msg.sender == developer) {
             token.mint(to_, amount_);
         } else {
-            require(token.balanceOf(msg.sender) >= amount_, "insufficient token");
+            require(token.balanceOf(msg.sender) >= amount_, "insuf tk");
             token.transferFrom(msg.sender, to_, amount_);
         }
     }
@@ -275,9 +307,9 @@ contract BagglMaster {
         uint256 amount,
         uint256 id
     ) public onlyGov {
-        require(amount > 0, "can't make transaction for 0 token");
-        uint256 serviceFeeAmount = amount.mul(feeRatio).div(feeMax);
-        uint256 realAmount = amount.sub(serviceFeeAmount);
+        require(amount > 0, "can't make 0 tk txn");
+        uint256 feeAmount = amount.mul(feeRatio).div(feeMax);
+        uint256 realAmount = amount.sub(feeAmount);
         transferFrom(buyer, amount);
         transferTo(seller, realAmount);
         emit MadeTransaction(buyer, seller, amount, id);
@@ -296,13 +328,14 @@ contract BagglMaster {
         emit RefundedTransaction(buyer, seller, amount, id);
     }
 
+// preserved
     function requestTransaction(
         address sender,
         address receiver,
         uint256 amount,
         uint256 id,
         bool isBuy
-    ) public onlySender(sender) {
+    ) public onlySender(sender) onlyUnlocked {
         if (isBuy) {
             _pendingTransaction[id] = TransactionType.BUY;
             emit RequestTransaction(sender, receiver, amount, id, isBuy);
@@ -312,70 +345,77 @@ contract BagglMaster {
         }
     }
 
+// preserved
     function receiveTransaction(
         address sender,
         address receiver,
         uint256 amount,
         uint256 id,
         bool isBuy
-    ) public onlySender(receiver) {
+    ) public onlySender(receiver) onlyUnlocked {
         uint256 feeAmount = amount.mul(feeRatio).div(feeMax);
         uint256 realAmount = amount.sub(feeAmount);
         if (isBuy) {
             require(
                 _pendingTransaction[id] == TransactionType.SELL,
-                "no pending transaction"
+                "no pending txn"
             );
             transferFrom(sender, amount);
             transferTo(receiver, realAmount);
-            token.burn(address(this), feeAmount);
+            if (feeAmount > 0) {
+                token.burn(address(this), feeAmount);
+            }
             _pendingTransaction[id] = TransactionType.FINISHED;
             emit ReceiveTransaction(sender, receiver, amount, id);
         } else {
             require(
                 _pendingTransaction[id] == TransactionType.BUY,
-                "no pending transaction"
+                "no pending txn"
             );
             transferFrom(receiver, amount);
             transferTo(sender, realAmount);
-            token.burn(address(this), feeAmount);
+            if (feeAmount > 0) {
+                token.burn(address(this), feeAmount);
+            }
             _pendingTransaction[id] = TransactionType.FINISHED;
             emit ReceiveTransaction(sender, receiver, amount, id);
         }
     }
 
+// preserved
     function rejectTransaction(
         address sender,
         address receiver,
         uint256 amount,
         uint256 id,
         bool isBuy
-    ) public onlySender(receiver) {
+    ) public onlySender(receiver) onlyUnlocked {
         if (isBuy) {
             require(
                 _pendingTransaction[id] == TransactionType.SELL,
-                "no pending transaction"
+                "no pending txn"
             );
             _pendingTransaction[id] = TransactionType.FINISHED;
             emit RejectTransaction(sender, receiver, amount, id);
         } else {
             require(
                 _pendingTransaction[id] == TransactionType.BUY,
-                "no pending transaction"
+                "no pending txn"
             );
             _pendingTransaction[id] = TransactionType.FINISHED;
             emit RejectTransaction(sender, receiver, amount, id);
         }
     }
 
-    function buyToken(address buyer, uint256 amount) public onlyGov {
-        require(amount > 0, "can't buy 0 token");
+    function mintToken(address buyer, uint256 amount) public onlyGov { // sendCommission
         token.mint(buyer, amount);
     }
 
-    function sellToken(address seller, uint256 amount) public onlyGov {
-        require(token.balanceOf(seller) >= amount, "insufficient token");
-        require(amount > 0, "can't sell 0 token");
+    function burnToken(address seller, uint256 amount) public onlyGov {
         token.burn(seller, amount);
+    }
+
+    function transferToken(address from, address to, uint256 amount) public onlyGov {
+        token.transferFrom(from, to, amount);
     }
 }
