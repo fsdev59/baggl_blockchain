@@ -12,8 +12,8 @@ contract BagglCreditTokenBase is ERC20 {
     address public developer;
     bool public isUnlocked;
 
-    constructor (string memory name, string memory symbol, uint8 decimals) ERC20(name, symbol) {
-        _setupDecimals(decimals);
+    constructor (string memory name, string memory symbol) ERC20(name, symbol) {
+        _setupDecimals(2);
         developer = msg.sender;
     }
 

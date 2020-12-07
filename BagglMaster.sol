@@ -15,7 +15,7 @@ contract BagglMaster {
 
     enum TransactionType {FINISHED, BUY, SELL}
 
-    mapping(address => uint256) private _debit;
+    mapping(address => uint256) public debit;
     mapping(address => UserType) private _userTypes;
     mapping(address => address) public referrer;
     mapping(address => UserState) private _userStates;
@@ -27,7 +27,8 @@ contract BagglMaster {
 
     uint32 public initialUserCredit = 15000;
     uint32 public referralBonus = 5000;
-    uint32 public feeRatio = 5;
+    uint32 public combinedFeeRatio = 2;
+    uint32 public tradeFeeRatio = 1;
     uint32 public feeMax = 100;
     uint32 public defaultCommissionRatio = 1;
     mapping(address => uint32) public commissionRatio;
@@ -153,9 +154,14 @@ contract BagglMaster {
         referralBonus = amount_;
     }
 
-    function setFeeRatio(uint32 feeRatio_) external onlyGov {
+    function setCombinedFeeRatio(uint32 feeRatio_) external onlyGov {
         require(feeRatio_ < feeMax, "too high f_ratio");
-        feeRatio = feeRatio_;
+        combinedFeeRatio = feeRatio_;
+    }
+
+    function setTradeFeeRatio(uint32 feeRatio_) external onlyGov {
+        require(feeRatio_ < feeMax, "too high f_ratio");
+        tradeFeeRatio = feeRatio_;
     }
 
     function setFeeMax(uint32 feeMax_) external onlyGov {
@@ -183,6 +189,11 @@ contract BagglMaster {
         commissionMax[referrer_] = commissionMax_;
     }
 
+    function setBackCommission(address referrer_) external onlyGov onlyNormal(referrer_) {
+        commissionRatio[referrer_] = defaultCommissionRatio;
+        commissionMax[referrer_] = defaultCommissionMax;
+    }
+
     function setOwnership(
         address owner_,
         address address_,
@@ -205,7 +216,9 @@ contract BagglMaster {
 
     function registerAdmin(address admin_) public onlyGov onlyNew(admin_) {
         _userTypes[admin_] = UserType.BUSINESS_ADMIN;
-        _owners[admin_] = address(this);
+        if (initialUserCredit > 0) {
+            token.mint(admin_, initialUserCredit);
+        }
         setOwnership(address(this), admin_, true);
     }
 
@@ -293,118 +306,86 @@ contract BagglMaster {
         onlyNormal(msg.sender)
     {
         _userStates[to_] = UserState.DELETED;
-        if (_owners[to_] == address(this)) {
-            token.burn(to_, token.balanceOf(to_));
-        } else {
-            token.transferFrom(to_, _owners[to_], token.balanceOf(to_));
+        if (token.balanceOf(to_) > 0) {
+            if (_owners[to_] == address(this)) {
+                token.burn(to_, token.balanceOf(to_));
+            } else {
+                token.transferFrom(to_, _owners[to_], token.balanceOf(to_));
+            }
         }
         setOwnership(_owners[to_], to_, false);
     }
 
-    function makeTransaction(
+    function makeCombinedTransaction(
+        address buyer,
+        address seller,
+        uint256 fullAmount,
+        uint256 creditAmount,
+        uint256 id
+    ) public onlyGov {
+        require(creditAmount > 0, "can't make 0 tk txn");
+        uint256 feeAmount = fullAmount.mul(combinedFeeRatio).div(feeMax);
+        if (creditAmount < feeAmount) {
+            uint256 realAmount = feeAmount.sub(creditAmount);
+            transferFrom(buyer, creditAmount);
+            transferFrom(seller, realAmount);
+        }
+        else {
+            uint256 realAmount = creditAmount.sub(feeAmount);
+            transferFrom(buyer, creditAmount);
+            transferTo(seller, realAmount);
+        }
+        emit MadeTransaction(buyer, seller, creditAmount, id);
+    }
+
+    function makeTradeOnlyTransaction(
         address buyer,
         address seller,
         uint256 amount,
         uint256 id
     ) public onlyGov {
         require(amount > 0, "can't make 0 tk txn");
-        uint256 feeAmount = amount.mul(feeRatio).div(feeMax);
-        uint256 realAmount = amount.sub(feeAmount);
-        transferFrom(buyer, amount);
-        transferTo(seller, realAmount);
+        uint256 feeAmount = amount.mul(tradeFeeRatio).div(feeMax);
+        uint256 realAmount = amount.add(feeAmount);
+        transferFrom(buyer, realAmount);
+        transferTo(seller, amount);
         emit MadeTransaction(buyer, seller, amount, id);
     }
 
-    function refundTransaction(
+    function refundCombinedTransaction(
+        address buyer,
+        address seller,
+        uint256 fullAmount,
+        uint256 creditAmount,
+        uint256 id
+    ) public onlyGov {
+        require(creditAmount > 0, "can't make 0 tk txn");
+        uint256 feeAmount = fullAmount.mul(combinedFeeRatio).div(feeMax);
+        if (creditAmount < feeAmount) {
+            uint256 realAmount = feeAmount.sub(creditAmount);
+            transferTo(buyer, creditAmount);
+            transferTo(seller, realAmount);
+        }
+        else {
+            uint256 realAmount = creditAmount.sub(feeAmount);
+            transferTo(buyer, creditAmount);
+            transferFrom(seller, realAmount);
+        }
+        emit RefundedTransaction(buyer, seller, creditAmount, id);
+    }
+
+    function refundTradeOnlyTransaction(
         address buyer,
         address seller,
         uint256 amount,
         uint256 id
     ) public onlyGov {
-        uint256 feeAmount = amount.mul(feeRatio).div(feeMax);
-        uint256 realAmount = amount.sub(feeAmount);
-        transferFrom(seller, realAmount);
-        transferTo(buyer, amount);
+        require(amount > 0, "can't make 0 tk txn");
+        uint256 feeAmount = amount.mul(tradeFeeRatio).div(feeMax);
+        uint256 realAmount = amount.add(feeAmount);
+        transferTo(buyer, realAmount);
+        transferFrom(seller, amount);
         emit RefundedTransaction(buyer, seller, amount, id);
-    }
-
-// preserved
-    function requestTransaction(
-        address sender,
-        address receiver,
-        uint256 amount,
-        uint256 id,
-        bool isBuy
-    ) public onlySender(sender) onlyUnlocked {
-        if (isBuy) {
-            _pendingTransaction[id] = TransactionType.BUY;
-            emit RequestTransaction(sender, receiver, amount, id, isBuy);
-        } else {
-            _pendingTransaction[id] = TransactionType.SELL;
-            emit RequestTransaction(sender, receiver, amount, id, isBuy);
-        }
-    }
-
-// preserved
-    function receiveTransaction(
-        address sender,
-        address receiver,
-        uint256 amount,
-        uint256 id,
-        bool isBuy
-    ) public onlySender(receiver) onlyUnlocked {
-        uint256 feeAmount = amount.mul(feeRatio).div(feeMax);
-        uint256 realAmount = amount.sub(feeAmount);
-        if (isBuy) {
-            require(
-                _pendingTransaction[id] == TransactionType.SELL,
-                "no pending txn"
-            );
-            transferFrom(sender, amount);
-            transferTo(receiver, realAmount);
-            if (feeAmount > 0) {
-                token.burn(address(this), feeAmount);
-            }
-            _pendingTransaction[id] = TransactionType.FINISHED;
-            emit ReceiveTransaction(sender, receiver, amount, id);
-        } else {
-            require(
-                _pendingTransaction[id] == TransactionType.BUY,
-                "no pending txn"
-            );
-            transferFrom(receiver, amount);
-            transferTo(sender, realAmount);
-            if (feeAmount > 0) {
-                token.burn(address(this), feeAmount);
-            }
-            _pendingTransaction[id] = TransactionType.FINISHED;
-            emit ReceiveTransaction(sender, receiver, amount, id);
-        }
-    }
-
-// preserved
-    function rejectTransaction(
-        address sender,
-        address receiver,
-        uint256 amount,
-        uint256 id,
-        bool isBuy
-    ) public onlySender(receiver) onlyUnlocked {
-        if (isBuy) {
-            require(
-                _pendingTransaction[id] == TransactionType.SELL,
-                "no pending txn"
-            );
-            _pendingTransaction[id] = TransactionType.FINISHED;
-            emit RejectTransaction(sender, receiver, amount, id);
-        } else {
-            require(
-                _pendingTransaction[id] == TransactionType.BUY,
-                "no pending txn"
-            );
-            _pendingTransaction[id] = TransactionType.FINISHED;
-            emit RejectTransaction(sender, receiver, amount, id);
-        }
     }
 
     function mintToken(address buyer, uint256 amount) public onlyGov { // sendCommission
@@ -417,5 +398,22 @@ contract BagglMaster {
 
     function transferToken(address from, address to, uint256 amount) public onlyGov {
         token.transferFrom(from, to, amount);
+    }
+
+    function loanCredit(address admin, uint256 amount) external onlyGov {
+        require(_userTypes[admin] == UserType.BUSINESS_ADMIN, "only admin can loan");
+        token.mint(admin, amount);
+        debit[admin] = debit[admin].add(amount);
+    }
+
+    function paybackCredit(address admin, uint256 amount) external onlyGov {
+        if (amount < debit[admin]) {
+            token.burn(admin, amount);
+            debit[admin] = debit[admin].sub(amount);
+        }
+        else {
+            token.burn(admin, debit[admin]);
+            debit[admin] = 0;
+        }
     }
 }
