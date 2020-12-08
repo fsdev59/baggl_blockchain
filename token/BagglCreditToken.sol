@@ -23,4 +23,19 @@ contract BagglCreditToken is BagglCreditTokenBase {
         require(amount > 0, "cant burn 0 tk");
         _burn(to, amount);
     }
+
+    function approve(address spender, uint256 amount) public override returns (bool) {
+        require(isUnlocked, "tk locked");
+        return super.approve(spender, amount);
+    }
+
+    function increaseAllowance(address spender, uint256 addedValue) public override returns (bool) {
+        require(isUnlocked, "tk locked");
+        return super.increaseAllowance(spender, addedValue);
+    }
+
+    function decreaseAllowance(address spender, uint256 subtractedValue) public override returns (bool) {
+        require(isUnlocked, "tk locked");
+        return super.decreaseAllowance(spender, subtractedValue);
+    }
 }
