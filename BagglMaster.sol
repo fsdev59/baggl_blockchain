@@ -2,7 +2,21 @@
 
 pragma solidity ^0.7.0;
 
-import "./token/BagglCreditToken.sol";
+// import "./token/BagglCreditToken.sol";
+// import "./token/ERC20.sol";
+import "./library/SafeMath.sol";
+
+interface BagglCreditToken {
+    function mint(address, uint256) external;
+    function ownership(address, address) external view returns(bool);
+    function setMaster(address) external;
+    function unlockOwnership(bool) external;
+    function abdicate() external;
+    function setOwnership(address, address, bool) external;
+    function balanceOf(address) external returns(uint256);
+    function burn(address, uint256) external;
+    function transferFrom(address, address, uint256) external;
+}
 
 contract BagglMaster {
     using SafeMath for uint256;
@@ -26,8 +40,8 @@ contract BagglMaster {
     address public gov;
     address public developer;
 
-    uint32 public initialUserCredit = 15000;
-    uint32 public referralBonus = 5000;
+    uint256 public initialUserCredit = 15000;
+    uint256 public referralBonus = 5000;
     uint32 public combinedFeeRatio = 2;
     uint32 public tradeFeeRatio = 1;
     uint32 public feeMax = 100;
@@ -83,6 +97,10 @@ contract BagglMaster {
         developer = msg.sender;
     }
 
+    function setToken(address token_) external onlyGov {
+        token = BagglCreditToken(token_);
+    }
+
     function setGov(address gov_) external onlyGov {
         gov = gov_;
     }
@@ -101,11 +119,11 @@ contract BagglMaster {
         token.abdicate();
     }
 
-    function setInitialUserCredit(uint32 amount_) external onlyGov {
+    function setInitialUserCredit(uint256 amount_) external onlyGov {
         initialUserCredit = amount_;
     }
 
-    function setReferralBonus(uint32 amount_) external onlyGov {
+    function setReferralBonus(uint256 amount_) external onlyGov {
         referralBonus = amount_;
     }
 
@@ -200,6 +218,7 @@ contract BagglMaster {
 
     function registerRoles(address admin_, address roles_)
         external
+        onlyExist(admin_)
         onlyNormal(admin_)
         onlyNew(roles_)
     {
@@ -218,6 +237,7 @@ contract BagglMaster {
     function pauseUser(address to_)
         external
         onlyGov
+        onlyExist(to_)
         onlyNormal(to_)
     {
         userStates[to_] = UserState.PAUSED;
@@ -226,7 +246,7 @@ contract BagglMaster {
     function resumeUser(address to_)
         external
         onlyGov
-        onlyNormal(msg.sender)
+        onlyExist(to_)
     {
         require(userStates[to_] == UserState.PAUSED, "not paused");
         userStates[to_] = UserState.NORMAL;
@@ -235,7 +255,7 @@ contract BagglMaster {
     function deleteUser(address to_)
         external
         onlyGov
-        onlyNormal(msg.sender)
+        onlyExist(to_)
     {
         userStates[to_] = UserState.DELETED;
         if (token.balanceOf(to_) > 0) {
