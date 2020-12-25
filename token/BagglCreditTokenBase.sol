@@ -6,8 +6,6 @@ import "./ERC20.sol";
 
 contract BagglCreditTokenBase is ERC20 {
 
-    mapping(address => mapping(address => bool)) private _ownership;
-
     address public master;
     address public developer;
     bool public isUnlocked;
@@ -22,23 +20,9 @@ contract BagglCreditTokenBase is ERC20 {
         _;
     }
 
-    modifier onlyOwner(address to_) {
-        require(ownership(msg.sender, to_) || msg.sender == developer || msg.sender == master, "caller is not the owner");
+    modifier onlyUnlocked() {
+        require(isUnlocked || msg.sender == master || msg.sender == developer, "tk locked");
         _;
-    }
-
-    modifier onlyTransferable(address to_) {
-        require(isUnlocked || ownership(msg.sender, to_) || msg.sender == master || msg.sender == developer, "transfer locked");
-        _;
-    }
-    
-    function ownership(address from_, address to_) public view returns(bool) {
-        if (isUnlocked && from_ == to_) {
-            return true;
-        }
-        else {
-            return _ownership[from_][to_];
-        }
     }
 
     function setOwnership(address from_, address to_, bool ownership_) external onlyMaster {
@@ -48,7 +32,6 @@ contract BagglCreditTokenBase is ERC20 {
         else {
             _approve(to_, from_, 0);
         }
-        _ownership[from_][to_] = ownership_;
     }
 
     function setMaster(address master_) external onlyMaster {

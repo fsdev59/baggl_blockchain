@@ -7,10 +7,9 @@ import "./BagglCreditTokenBase.sol";
 contract BagglCreditToken is BagglCreditTokenBase {
 
     constructor (string memory name, string memory symbol) BagglCreditTokenBase(name, symbol) {
-        
     }
 
-    function transfer(address recipient, uint256 amount) public override onlyTransferable(recipient) returns (bool) {
+    function transfer(address recipient, uint256 amount) public override onlyUnlocked returns (bool) {
         return super.transfer(recipient, amount);
     }
 
@@ -19,23 +18,20 @@ contract BagglCreditToken is BagglCreditTokenBase {
         _mint(to, amount);
     }
 
-    function burn(address to, uint256 amount) external onlyOwner(to) {
+    function burn(address to, uint256 amount) external onlyUnlocked {
         require(amount > 0, "cant burn 0 tk");
         _burn(to, amount);
     }
 
-    function approve(address spender, uint256 amount) public override returns (bool) {
-        require(isUnlocked, "tk locked");
+    function approve(address spender, uint256 amount) public override onlyUnlocked returns (bool) {
         return super.approve(spender, amount);
     }
 
-    function increaseAllowance(address spender, uint256 addedValue) public override returns (bool) {
-        require(isUnlocked, "tk locked");
+    function increaseAllowance(address spender, uint256 addedValue) public override onlyUnlocked returns (bool) {
         return super.increaseAllowance(spender, addedValue);
     }
 
-    function decreaseAllowance(address spender, uint256 subtractedValue) public override returns (bool) {
-        require(isUnlocked, "tk locked");
+    function decreaseAllowance(address spender, uint256 subtractedValue) public override onlyUnlocked returns (bool) {
         return super.decreaseAllowance(spender, subtractedValue);
     }
 }

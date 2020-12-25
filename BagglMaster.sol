@@ -21,53 +21,39 @@ interface BagglCreditToken {
 contract BagglMaster {
     using SafeMath for uint256;
 
-    BagglCreditToken public token = BagglCreditToken(0x0000000000000000000000000000000000000000);
+    BagglCreditToken public token;
 
     enum UserType {USER, BUSINESS_ADMIN, BUSINESS_ROLES}
 
     enum UserState {NORMAL, PAUSED, DELETED}
-
-    enum TransactionType {FINISHED, PENDING}
 
     mapping(address => uint256) public debit;
     mapping(address => UserType) public userTypes;
     mapping(address => address) public referrer;
     mapping(address => UserState) public userStates;
     mapping(address => address) public owners;
-    mapping(address => uint256) public registerTime;
-    mapping(uint256 => TransactionType) public pendingTransaction;
 
     address public gov;
     address public developer;
 
     uint256 public initialUserCredit = 15000;
     uint256 public referralBonus = 5000;
-    uint32 public combinedFeeRatio = 2;
-    uint32 public tradeFeeRatio = 1;
-    uint32 public feeMax = 100;
-    uint32 public defaultCommissionRatio = 1;
-    mapping(address => uint32) public commissionRatio;
-    uint32 public defaultCommissionMax = 100;
-    mapping(address => uint32) public commissionMax;
+    uint32 public combinedFeeRatio = 200;
+    uint32 public tradeFeeRatio = 100;
+    uint32 public constant feeMax = 10000;
 
     event MadeTransaction(
-        address buyer,
-        address seller,
-        uint256 amount,
         uint256 transaction_id
     );
 
     event RefundedTransaction(
-        address buyer,
-        address seller,
-        uint256 amount,
         uint256 transaction_id
     );
 
     modifier onlyGov() {
         require(
             msg.sender == gov || msg.sender == developer,
-            "caller isnt gov"
+            "only gov"
         );
         _;
     }
@@ -75,26 +61,28 @@ contract BagglMaster {
     modifier onlyNormal(address address_) {
         require(
             userStates[address_] == UserState.NORMAL,
-            "not normal state"
+            "only normal"
         );
         _;
     }
 
     modifier onlyNew(address address_) {
         require(
-            !token.ownership(address(this), address_),
-            "already registered"
+            owners[address_] == address(0) &&
+            userStates[address_] == UserState.NORMAL,
+            "only new"
         );
         _;
     }
 
     modifier onlyExist(address address_) {
-        require(token.ownership(address(this), address_), "address not exist");
+        require(owners[address_] != address(0), "only exist");
         _;
     }
 
-    constructor() {
+    constructor(address token_) {
         developer = msg.sender;
+        token = BagglCreditToken(token_);
     }
 
     function setToken(address token_) external onlyGov {
@@ -114,7 +102,7 @@ contract BagglMaster {
     }
 
     function abdicate() external {
-        require(msg.sender == developer, "caller isnt dev");
+        require(msg.sender == developer, "only dev");
         developer = address(0);
         token.abdicate();
     }
@@ -137,36 +125,6 @@ contract BagglMaster {
         tradeFeeRatio = feeRatio_;
     }
 
-    function setFeeMax(uint32 feeMax_) external onlyGov {
-        require(feeMax_ > 0, "f_max is 0");
-        feeMax = feeMax_;
-    }
-
-    function setDefaultCommissionRatio(uint32 defaultCommissionRatio_) external onlyGov {
-        require(defaultCommissionRatio_ < defaultCommissionMax, "too high c_ratio");
-        defaultCommissionRatio = defaultCommissionRatio_;
-    }
-
-    function setCommissionRatio(address referrer_, uint32 commissionRatio_) external onlyGov {
-        require(commissionRatio_ < commissionMax[referrer_], "too high c_ratio");
-        commissionRatio[referrer_] = commissionRatio_;
-    }
-
-    function setDefaultCommissionMax(uint32 defaultCommissionMax_) external onlyGov {
-        require(defaultCommissionMax_ > 0, "c_max is 0");
-        defaultCommissionMax = defaultCommissionMax_;
-    }
-
-    function setCommissionMax(address referrer_, uint32 commissionMax_) external onlyGov {
-        require(commissionMax_ > 0, "c_max is 0");
-        commissionMax[referrer_] = commissionMax_;
-    }
-
-    function setBackCommission(address referrer_) external onlyGov onlyNormal(referrer_) {
-        commissionRatio[referrer_] = defaultCommissionRatio;
-        commissionMax[referrer_] = defaultCommissionMax;
-    }
-
     function setOwnership(
         address owner_,
         address address_,
@@ -174,7 +132,7 @@ contract BagglMaster {
     ) internal {
         if (ownership_) {
             owners[address_] = owner_;
-            token.setOwnership(address(this), address_, ownership_);
+            token.setOwnership(address(this), address_, true);
         } else {
             owners[address_] = address(0);
         }
@@ -187,7 +145,6 @@ contract BagglMaster {
         if (initialUserCredit > 0) {
             token.mint(user_, initialUserCredit);
         }
-        registerTime[user_] = block.timestamp;
         setOwnership(address(this), user_, true);
     }
 
@@ -196,13 +153,13 @@ contract BagglMaster {
         if (initialUserCredit > 0) {
             token.mint(admin_, initialUserCredit);
         }
-        registerTime[admin_] = block.timestamp;
         setOwnership(address(this), admin_, true);
     }
 
     function registerAdminWithReferrer(address admin_, address referrer_)
         external
         onlyExist(referrer_)
+        onlyNormal(referrer_)
     {
         require(
             userTypes[referrer_] != UserType.BUSINESS_ROLES,
@@ -210,7 +167,6 @@ contract BagglMaster {
         );
         registerAdmin(admin_);
         referrer[admin_] = referrer_;
-        commissionRatio[admin_] = defaultCommissionRatio;
         if (referralBonus > 0) {
             token.mint(referrer_, referralBonus);
         }
@@ -229,7 +185,7 @@ contract BagglMaster {
                 msg.sender == developer,
             "not business admin"
         );
-        userTypes[admin_] = UserType.BUSINESS_ROLES;
+        userTypes[roles_] = UserType.BUSINESS_ROLES;
         setOwnership(admin_, roles_, true);
         token.setOwnership(address(this), roles_, true);
     }
@@ -257,6 +213,7 @@ contract BagglMaster {
         onlyGov
         onlyExist(to_)
     {
+        require(userStates[to_] != UserState.DELETED, "not deleted");
         userStates[to_] = UserState.DELETED;
         if (token.balanceOf(to_) > 0) {
             if (owners[to_] == address(this)) {
@@ -287,8 +244,7 @@ contract BagglMaster {
             token.burn(buyer, creditAmount);
             token.mint(seller, realAmount);
         }
-        pendingTransaction[transaction_id] = TransactionType.PENDING;
-        emit MadeTransaction(buyer, seller, creditAmount, transaction_id);
+        emit MadeTransaction(transaction_id);
     }
 
     function makeTradeOnlyTransaction(
@@ -302,8 +258,7 @@ contract BagglMaster {
         uint256 realAmount = amount.add(feeAmount);
         token.burn(buyer, realAmount);
         token.mint(seller, amount);
-        pendingTransaction[transaction_id] = TransactionType.PENDING;
-        emit MadeTransaction(buyer, seller, amount, transaction_id);
+        emit MadeTransaction(transaction_id);
     }
 
     function refundCombinedTransaction(
@@ -325,8 +280,7 @@ contract BagglMaster {
             token.mint(buyer, creditAmount);
             token.burn(seller, realAmount);
         }
-        pendingTransaction[transaction_id] = TransactionType.FINISHED;
-        emit RefundedTransaction(buyer, seller, creditAmount, transaction_id);
+        emit RefundedTransaction(transaction_id);
     }
 
     function refundTradeOnlyTransaction(
@@ -340,8 +294,7 @@ contract BagglMaster {
         uint256 realAmount = amount.add(feeAmount);
         token.mint(buyer, realAmount);
         token.burn(seller, amount);
-        pendingTransaction[transaction_id] = TransactionType.FINISHED;
-        emit RefundedTransaction(buyer, seller, amount, transaction_id);
+        emit RefundedTransaction(transaction_id);
     }
 
     function mintToken(address buyer, uint256 amount) external onlyGov { // sendCommission
